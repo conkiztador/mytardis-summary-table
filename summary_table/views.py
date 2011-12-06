@@ -97,8 +97,14 @@ def table(request, experiment_id):
 
 
 def _get_parameter_names(experiment_id):
-    parameter_name_pks = DatafileParameter.objects.filter(parameterset__dataset_file__dataset__experiment__id=experiment_id).distinct().values_list('name__id', flat=True)
-    parameter_names = ParameterName.objects.filter(pk__in=parameter_name_pks)
+    cache_key = 'summary_table__exp_%s__parameter_name_ids' % experiment_id
+    parameter_name_ids = cache.get(cache_key)
+    if parameter_name_ids:
+        parameter_names = ParameterName.objects.filter(pk__in=parameter_name_ids.split())
+    else:
+        parameter_name_pks = DatafileParameter.objects.filter(parameterset__dataset_file__dataset__experiment__id=experiment_id).distinct().values_list('name__id', flat=True)
+        parameter_names = ParameterName.objects.filter(pk__in=parameter_name_pks)
+        cache.set(cache_key, ' '.join([ str(p.pk) for p in parameter_names ]), 60*5)
     return parameter_names
 
 
