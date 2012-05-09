@@ -7,6 +7,7 @@ from django.http import HttpResponse
 from django.template import Context
 from django.shortcuts import render_to_response, redirect
 from django.views.decorators.cache import never_cache
+from django.core.cache import cache
 
 from tardis.tardis_portal.auth import decorators as authz
 from tardis.tardis_portal.creativecommonshandler import CreativeCommonsHandler
@@ -27,11 +28,12 @@ def index(request, experiment_id):
     context['show_popout_link'] = True
     return HttpResponse(render_response_index(request, url, context))
 
+
 def _context(experiment_id):
     c = Context()
     experiment = Experiment.objects.get(pk=experiment_id)
 
-    parameter_names = ParameterName.objects.filter(datafileparameter__parameterset__dataset_file__dataset__experiment=experiment).distinct()
+    parameter_names = _get_parameter_names(experiment_id)
     datafiles = Dataset_File.objects.filter(dataset__experiment=experiment)
 
     descs = [{'mDataProp': 'filename', 'sTitle': 'filename'}]
@@ -61,7 +63,7 @@ def table(request, experiment_id):
 
     experiment = Experiment.objects.get(pk=experiment_id)
 
-    parameter_names = ParameterName.objects.filter(datafileparameter__parameterset__dataset_file__dataset__experiment=experiment).distinct()
+    parameter_names = _get_parameter_names(experiment_id)
     datafiles = Dataset_File.objects.filter(dataset__experiment=experiment)
 
     if sort_col_name == 'filename':
@@ -92,6 +94,18 @@ def table(request, experiment_id):
     resp['iTotalRecords'] = datafiles.count()
     resp['iTotalDisplayRecords'] = filtered_datafiles.count()
     return HttpResponse(json.dumps(resp), mimetype='application/json')
+
+
+def _get_parameter_names(experiment_id):
+    cache_key = 'summary_table__exp_%s__parameter_name_ids' % experiment_id
+    parameter_name_ids = cache.get(cache_key)
+    if parameter_name_ids:
+        parameter_names = ParameterName.objects.filter(pk__in=parameter_name_ids.split())
+    else:
+        parameter_name_pks = DatafileParameter.objects.filter(parameterset__dataset_file__dataset__experiment__id=experiment_id).distinct().values_list('name__id', flat=True)
+        parameter_names = ParameterName.objects.filter(pk__in=parameter_name_pks)
+        cache.set(cache_key, ' '.join([ str(p.pk) for p in parameter_names ]), 60*5)
+    return parameter_names
 
 
 def _get_rows(dfs, parameter_names, params_by_file, sort_desc, post_filter, sort_col_name):
@@ -171,7 +185,7 @@ def csv_export(request, experiment_id):
     response = HttpResponse(mimetype='text/csv')
     response['Content-Disposition'] = 'attachment; filename="exported_%s.csv"' % experiment_id
 
-    parameter_names = list(ParameterName.objects.filter(datafileparameter__parameterset__dataset_file__dataset__experiment=experiment_id).distinct())
+    parameter_names = list(_get_parameter_names(experiment_id))
     datafiles = list(Dataset_File.objects.filter(dataset__experiment=experiment_id))
     datafile_ids = [df.id for df in datafiles]
 
